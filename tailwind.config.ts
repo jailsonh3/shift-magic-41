@@ -57,6 +57,21 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        shift: {
+          morning: "hsl(var(--shift-morning))",
+          afternoon: "hsl(var(--shift-afternoon))",
+          night: "hsl(var(--shift-night))",
+          partial: "hsl(var(--shift-partial))",
+          dayoff: "hsl(var(--shift-dayoff))",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
