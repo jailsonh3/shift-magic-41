@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { generateSchedule, totalMonthMinutes } from '@/lib/scheduleGenerator';
+import { generateSchedule, totalMonthMinutes, validateCoverage } from '@/lib/scheduleGenerator';
 import { computeShiftMinutes, dateKey, formatDuration } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 import ShiftEditPopover from './ShiftEditPopover';
@@ -30,6 +30,8 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
 
   const [warnings, setWarnings] = useState<string[]>([]);
   const [warnOpen, setWarnOpen] = useState(false);
+  const [warnTitle, setWarnTitle] = useState('Avisos da geração');
+  const [warnBlocking, setWarnBlocking] = useState(false);
 
   const isSupervisor = user?.role === 'supervisor';
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -52,30 +54,40 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
     return m;
   }, [templates]);
 
-  const handleGenerate = () => {
+  const runGeneration = (label: string, keepDayOffs?: typeof entries) => {
     const emps = mockUsers.filter(u => u.role === 'employee');
     const result = generateSchedule({
-      year, month, employees: emps, templates, settings,
+      year, month, employees: emps, templates, settings, keepDayOffs,
     });
+    if (!result.success) {
+      setWarnings(result.warnings);
+      setWarnTitle(`${label} bloqueada — cobertura não garantida`);
+      setWarnBlocking(true);
+      setWarnOpen(true);
+      toast.error(`${label} não concluída: há dias sem cobertura completa.`);
+      return;
+    }
     replaceAll(result.entries);
     setWarnings(result.warnings);
+    setWarnTitle(`${label} concluída`);
+    setWarnBlocking(false);
     if (result.warnings.length) setWarnOpen(true);
-    toast.success(`Escala gerada — ${result.entries.length} entradas`);
+    toast.success(`${label} concluída — cobertura ${settings.coverageStart}—${settings.coverageEnd} garantida.`);
   };
 
-  const handleRecalculate = () => {
-    const emps = mockUsers.filter(u => u.role === 'employee');
-    const result = generateSchedule({
-      year, month, employees: emps, templates, settings,
-      keepDayOffs: entries.filter(e => e.isDayOff),
-    });
-    replaceAll(result.entries);
-    setWarnings(result.warnings);
-    if (result.warnings.length) setWarnOpen(true);
-    toast.success('Escala recalculada mantendo folgas manuais');
-  };
+  const handleGenerate = () => runGeneration('Geração automática');
+  const handleRecalculate = () => runGeneration('Recalcular escala', entries.filter(e => e.isDayOff));
 
   const handleSave = () => {
+    const check = validateCoverage(entries, templates, settings, year, month);
+    if (!check.ok) {
+      setWarnings(check.problems);
+      setWarnTitle('Salvamento bloqueado — cobertura incompleta');
+      setWarnBlocking(true);
+      setWarnOpen(true);
+      toast.error('Não é possível salvar: existem horários sem cobertura.');
+      return;
+    }
     save();
     toast.success('Alterações salvas');
   };
@@ -246,13 +258,18 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-warning" />
-              Avisos da geração
+              <AlertTriangle className={`w-5 h-5 ${warnBlocking ? 'text-destructive' : 'text-warning'}`} />
+              {warnTitle}
             </DialogTitle>
           </DialogHeader>
+          {warnBlocking && (
+            <p className="text-sm text-muted-foreground">
+              A escala não foi salva. Ajuste os turnos cadastrados, a disponibilidade de funcionários ou as folgas manuais e tente novamente.
+            </p>
+          )}
           <div className="max-h-80 overflow-y-auto space-y-2">
             {warnings.map((w, i) => (
-              <div key={i} className="text-sm p-2 bg-warning/10 border border-warning/30 rounded">
+              <div key={i} className={`text-sm p-2 rounded border ${warnBlocking ? 'bg-destructive/10 border-destructive/30' : 'bg-warning/10 border-warning/30'}`}>
                 {w}
               </div>
             ))}
