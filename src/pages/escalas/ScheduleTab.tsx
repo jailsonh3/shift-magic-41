@@ -1,0 +1,266 @@
+import React, { useMemo, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { mockUsers } from '@/data/mockData';
+import { useShiftTemplates } from '@/hooks/useShiftTemplates';
+import { useScheduleSettings } from '@/hooks/useScheduleSettings';
+import { useSchedule } from '@/hooks/useSchedule';
+import { Sparkles, RefreshCw, Save, Coffee, AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { generateSchedule, totalMonthMinutes } from '@/lib/scheduleGenerator';
+import { computeShiftMinutes, dateKey, formatDuration } from '@/lib/timeUtils';
+import { toast } from 'sonner';
+import ShiftEditPopover from './ShiftEditPopover';
+
+const DAY_NAMES = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+
+interface Props {
+  year: number;
+  month: number;
+  employeeFilter: string;
+}
+
+const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
+  const { user } = useAuth();
+  const { templates } = useShiftTemplates();
+  const { settings } = useScheduleSettings();
+  const { entries, replaceAll, upsertCell, clearCell, save, dirty } = useSchedule(year, month);
+
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [warnOpen, setWarnOpen] = useState(false);
+
+  const isSupervisor = user?.role === 'supervisor';
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  const employees = useMemo(() => {
+    let emps = mockUsers.filter(u => u.role === 'employee');
+    if (user?.role === 'employee') emps = emps.filter(e => e.id === user.id);
+    if (employeeFilter !== 'all') emps = emps.filter(e => e.id === employeeFilter);
+    return emps;
+  }, [user, employeeFilter]);
+
+  const scheduleMap = useMemo(() => {
+    const m = new Map<string, typeof entries[0]>();
+    entries.forEach(e => m.set(`${e.employeeId}-${e.date}`, e));
+    return m;
+  }, [entries]);
+
+  const templateById = useMemo(() => {
+    const m = new Map(templates.map(t => [t.id, t]));
+    return m;
+  }, [templates]);
+
+  const handleGenerate = () => {
+    const emps = mockUsers.filter(u => u.role === 'employee');
+    const result = generateSchedule({
+      year, month, employees: emps, templates, settings,
+    });
+    replaceAll(result.entries);
+    setWarnings(result.warnings);
+    if (result.warnings.length) setWarnOpen(true);
+    toast.success(`Escala gerada — ${result.entries.length} entradas`);
+  };
+
+  const handleRecalculate = () => {
+    const emps = mockUsers.filter(u => u.role === 'employee');
+    const result = generateSchedule({
+      year, month, employees: emps, templates, settings,
+      keepDayOffs: entries.filter(e => e.isDayOff),
+    });
+    replaceAll(result.entries);
+    setWarnings(result.warnings);
+    if (result.warnings.length) setWarnOpen(true);
+    toast.success('Escala recalculada mantendo folgas manuais');
+  };
+
+  const handleSave = () => {
+    save();
+    toast.success('Alterações salvas');
+  };
+
+  // Daily coverage count (# employees working)
+  const dailyCoverage = useMemo(() => {
+    const cov: number[] = [];
+    const allEmps = mockUsers.filter(u => u.role === 'employee');
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = dateKey(year, month, d);
+      const count = allEmps.filter(emp => {
+        const e = scheduleMap.get(`${emp.id}-${date}`);
+        return e && !e.isDayOff && e.shiftTemplateId;
+      }).length;
+      cov.push(count);
+    }
+    return cov;
+  }, [scheduleMap, year, month, daysInMonth]);
+
+  return (
+    <TooltipProvider>
+      {/* Action bar */}
+      {isSupervisor && (
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Button className="gap-2" onClick={handleGenerate}>
+              <Sparkles className="w-4 h-4" />Gerar Escala Automática
+            </Button>
+            <Button variant="outline" className="gap-2" onClick={handleRecalculate}>
+              <RefreshCw className="w-4 h-4" />Recalcular
+            </Button>
+            <Button variant={dirty ? 'default' : 'outline'} className="gap-2" onClick={handleSave} disabled={!dirty}>
+              <Save className="w-4 h-4" />Salvar {dirty && <span className="text-xs">•</span>}
+            </Button>
+          </div>
+          {dirty && (
+            <Badge variant="outline" className="text-warning border-warning/40 gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              Alterações não salvas
+            </Badge>
+          )}
+        </div>
+      )}
+
+      {/* Grid */}
+      <div className="overflow-x-auto border rounded-lg bg-card">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b">
+              <th className="sticky left-0 bg-card px-3 py-2 text-left font-medium text-muted-foreground min-w-[200px]">Funcionário</th>
+              {Array.from({ length: daysInMonth }, (_, i) => {
+                const d = i + 1;
+                const dow = new Date(year, month - 1, d).getDay();
+                const isWeekend = dow === 0 || dow === 6;
+                const today = new Date();
+                const isToday = d === today.getDate() && month === today.getMonth() + 1 && year === today.getFullYear();
+                return (
+                  <th key={d} className={`px-1 py-1 text-center min-w-[44px] ${isWeekend ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    <div className="text-[10px]">{DAY_NAMES[dow]}</div>
+                    <div className={`text-xs font-medium ${isToday ? 'bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center mx-auto' : ''}`}>
+                      {d}
+                    </div>
+                  </th>
+                );
+              })}
+              <th className="sticky right-0 bg-card px-3 py-2 text-center font-medium text-muted-foreground min-w-[80px]">Horas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map(emp => {
+              const totalMins = totalMonthMinutes(emp.id, entries, templates);
+              return (
+                <tr key={emp.id} className="border-b last:border-0 hover:bg-muted/30">
+                  <td className="sticky left-0 bg-card px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold text-primary-foreground"
+                        style={{ backgroundColor: emp.avatarColor }}>{emp.initials}</div>
+                      <div>
+                        <div className="font-medium text-foreground text-sm whitespace-nowrap">{emp.name}</div>
+                        <div className="text-[11px] text-muted-foreground">{emp.position || 'Funcionário'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  {Array.from({ length: daysInMonth }, (_, i) => {
+                    const d = i + 1;
+                    const date = dateKey(year, month, d);
+                    const entry = scheduleMap.get(`${emp.id}-${date}`);
+                    const tpl = entry?.shiftTemplateId ? templateById.get(entry.shiftTemplateId) : undefined;
+
+                    const cell = entry?.isDayOff ? (
+                      <div className="rounded bg-shift-dayoff/20 py-1 text-shift-dayoff font-bold text-xs">F</div>
+                    ) : tpl ? (
+                      <div className={`rounded py-1 px-0.5 bg-primary/10 text-primary text-[10px] font-semibold`}>
+                        {tpl.startTime}
+                      </div>
+                    ) : (
+                      <div className="rounded py-1 text-muted-foreground/40 text-xs">—</div>
+                    );
+
+                    const content = (
+                      <button className="w-full block" disabled={!isSupervisor}>
+                        {cell}
+                      </button>
+                    );
+
+                    return (
+                      <td key={d} className="px-0.5 py-1 text-center">
+                        {isSupervisor ? (
+                          <ShiftEditPopover
+                            templates={templates}
+                            onSelect={(tid) => upsertCell(emp.id, date, { shiftTemplateId: tid, isDayOff: false })}
+                            onDayOff={() => upsertCell(emp.id, date, { isDayOff: true, shiftTemplateId: undefined })}
+                            onClear={() => clearCell(emp.id, date)}
+                          >
+                            <Tooltip>
+                              <TooltipTrigger asChild>{content}</TooltipTrigger>
+                              <TooltipContent>
+                                {entry?.isDayOff ? 'Folga' :
+                                  tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime} • pausa ${tpl.breakMinutes}min • ${formatDuration(computeShiftMinutes(tpl.startTime, tpl.endTime, tpl.breakMinutes))}` :
+                                  'Sem atribuição — clique para editar'}
+                              </TooltipContent>
+                            </Tooltip>
+                          </ShiftEditPopover>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>{content}</TooltipTrigger>
+                            <TooltipContent>
+                              {entry?.isDayOff ? 'Folga' :
+                                tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime}` : '—'}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="sticky right-0 bg-card px-3 py-2 text-center font-semibold text-primary">
+                    {formatDuration(totalMins)}
+                  </td>
+                </tr>
+              );
+            })}
+
+            {/* Coverage row */}
+            {isSupervisor && (
+              <tr className="border-t bg-muted/30">
+                <td className="sticky left-0 bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">Cobertura (funcionários)</td>
+                {dailyCoverage.map((c, i) => {
+                  const low = c < 2;
+                  return (
+                    <td key={i} className={`text-center text-xs font-semibold ${low ? 'text-destructive' : 'text-foreground'}`}>
+                      {c}
+                    </td>
+                  );
+                })}
+                <td className="sticky right-0 bg-muted/30" />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {employees.length === 0 && (
+        <div className="text-center py-10 text-muted-foreground">Nenhum funcionário para exibir.</div>
+      )}
+
+      {/* Warnings modal */}
+      <Dialog open={warnOpen} onOpenChange={setWarnOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-warning" />
+              Avisos da geração
+            </DialogTitle>
+          </DialogHeader>
+          <div className="max-h-80 overflow-y-auto space-y-2">
+            {warnings.map((w, i) => (
+              <div key={i} className="text-sm p-2 bg-warning/10 border border-warning/30 rounded">
+                {w}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </TooltipProvider>
+  );
+};
+
+export default ScheduleTab;
