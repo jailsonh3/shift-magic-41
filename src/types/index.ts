@@ -8,6 +8,7 @@ export interface User {
   supervisorId?: string;
   initials: string;
   avatarColor: string;
+  position?: string;
 }
 
 export type ShiftType = 'OPENING' | 'MID' | 'CLOSING';
@@ -17,17 +18,20 @@ export interface ShiftTemplate {
   id: string;
   name: string;
   type: ShiftType;
-  startTime: string;
-  endTime: string;
+  startTime: string; // HH:MM
+  endTime: string;   // HH:MM
   period: ShiftPeriod;
   supervisorId: string;
+  breakMinutes: number;
+  active: boolean;
 }
 
-export interface BreakRule {
-  id: string;
-  templateId: string;
-  duration: number; // minutes
-  order: number;
+export interface ScheduleSettings {
+  daysOffPerMonth: number;
+  coverageStart: string; // HH:MM
+  coverageEnd: string;   // HH:MM
+  allowManualEdit: boolean;
+  maxConsecutiveDays: number;
 }
 
 export interface ScheduleEntry {
@@ -35,16 +39,7 @@ export interface ScheduleEntry {
   employeeId: string;
   date: string; // YYYY-MM-DD
   shiftTemplateId?: string;
-  period: ShiftPeriod;
-  startTime?: string;
-  endTime?: string;
   isDayOff: boolean;
-}
-
-export interface WeeklyDayOff {
-  id: string;
-  employeeId: string;
-  dayOfWeek: number; // 0=Sun, 6=Sat
 }
 
 export interface Request {
@@ -54,25 +49,6 @@ export interface Request {
   status: 'pending' | 'approved' | 'rejected';
   description: string;
   createdAt: string;
-}
-
-export interface ShiftChangeRequest {
-  id: string;
-  fromEmployeeId: string;
-  toEmployeeId: string;
-  date: string;
-  status: 'pending_employee' | 'pending_supervisor' | 'approved' | 'rejected';
-  createdAt: string;
-}
-
-export interface Absence {
-  id: string;
-  employeeId: string;
-  type: 'medical' | 'vacation' | 'personal';
-  startDate: string;
-  endDate: string;
-  documentUrl?: string;
-  approved: boolean;
 }
 
 export interface TimeBank {
