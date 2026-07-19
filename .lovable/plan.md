@@ -1,155 +1,49 @@
-## Objetivo
+## Plano de implementação
 
-Transformar `/escalas` em um centro de planejamento com 3 abas, permitindo ao supervisor cadastrar turnos, definir regras gerais e gerar a escala mensal automaticamente de forma equilibrada — mantendo edição manual.
+1. **Refatorar o motor de geração de escala**
+   - Substituir a atribuição atual por um algoritmo orientado por dia, cobertura e histórico.
+   - Usar somente turnos ativos cadastrados pelo supervisor.
+   - Calcular quais turnos cobrem o período operacional configurado e validar lacunas antes de aceitar a escala.
+   - Rodar tentativas de redistribuição quando houver lacunas, antes de bloquear a geração.
 
-Escopo desta iteração: **frontend + persistência em localStorage**. Integração com banco (Lovable Cloud) fica para uma etapa seguinte para não misturar duas mudanças grandes.
+2. **Garantir rodízio real de turnos**
+   - Considerar o histórico dos dias anteriores de cada funcionário.
+   - Penalizar repetição consecutiva do mesmo turno/horário.
+   - Balancear a quantidade de vezes que cada funcionário recebe cada turno.
+   - Fazer o botão **Recalcular Escala** gerar uma nova distribuição, evitando repetir a escala anterior quando houver alternativas válidas.
 
----
+3. **Corrigir distribuição de folgas**
+   - Tratar `daysOffPerMonth` como máximo padrão de folgas mensais por funcionário.
+   - Distribuir folgas de forma espaçada ao longo do mês, evitando concentração desnecessária.
+   - Nunca conceder folga se isso comprometer a cobertura operacional.
+   - Reportar quando uma folga solicitada/manual não puder ser mantida por falta de cobertura.
 
-## 1. Estrutura de abas na página `/escalas`
+4. **Tratar indisponibilidades e férias**
+   - Adicionar suporte no algoritmo para dias indisponíveis por funcionário.
+   - Considerar férias/atestados/ausências aprovadas como indisponibilidade total, sem contar como folga comum.
+   - Permitir que funcionários ultrapassem o limite de 5 dias sem trabalhar somente quando os dias extras forem férias, afastamentos ou ausência aprovada.
+   - Como a estrutura atual de solicitações tem tipo/status, mas não possui período de início/fim integrado à escala, vou preparar a lógica para aceitar indisponibilidades datadas e ligar aos dados disponíveis no app.
 
-Reorganizar `EscalasPage.tsx` com um componente `Tabs` (shadcn):
+5. **Validação final obrigatória**
+   - Antes de aplicar ou salvar a escala, validar:
+     - cobertura contínua entre início e fim configurados;
+     - máximo de folgas padrão por funcionário;
+     - rodízio mínimo de turnos quando existirem opções suficientes;
+     - respeito a indisponibilidades;
+     - máximo de dias consecutivos configurado, salvo quando cobertura exigir exceção reportada.
+   - Bloquear a geração/salvamento com relatório claro quando não existir escala válida possível.
 
-- **Escala Mensal** (visão atual, melhorada)
-- **Configuração de Turnos** (novo)
-- **Configurações Gerais** (novo)
-
-Filtros no topo, persistidos entre abas: mês/ano, funcionário. (Unidade/Equipe ficam preparados na UI mas sem lógica, já que ainda não há esse conceito no modelo.)
-
----
-
-## 2. Aba "Configuração de Turnos"
-
-CRUD completo de turnos cadastrados pelo supervisor.
-
-Campos por turno:
-- Nome (ex.: "Manhã 07h")
-- Horário de início (HH:MM)
-- Horário de término (HH:MM)
-- Pausa em minutos (default 20)
-- Carga horária total: **calculada automaticamente** (fim − início − pausa, exibida como "6h20")
-- Status: Ativo / Inativo (toggle)
-
-UI: tabela com botões Novo/Editar/Excluir + modal de formulário com validação Zod (fim > início, pausa ≥ 0).
-
-Somente turnos **ativos** entram na geração automática.
-
----
-
-## 3. Aba "Configurações Gerais"
-
-Formulário único com:
-- Folgas por funcionário no mês (default 5)
-- Horário inicial de cobertura (default 07:00)
-- Horário final de cobertura (default 22:00)
-- Toggle "Permitir edição manual após geração automática" (default ligado)
-- Máx. dias consecutivos de trabalho (default 6)
-
-Salva em localStorage sob `shiftmanager_settings`.
-
----
-
-## 4. Aba "Escala Mensal" (aprimorada)
-
-Reaproveita a grade atual (funcionário × dias), com estas melhorias:
-
-**Coluna do funcionário passa a mostrar:**
-- Avatar + Nome
-- Cargo (novo campo — adicionar `role`/`position` opcional no tipo `User`, default "Funcionário")
-- Total de horas previstas no mês (somatório das cargas dos turnos atribuídos)
-
-**Cada célula do dia mostra:**
-- Nome curto do turno + horário de início (ex.: "07:00")
-- Folga: badge visual "F" em vermelho
-- Tooltip no hover com horário completo, pausa e carga
-
-**Barra de ações no topo da aba:**
-- Botão **Gerar Escala Automática** (abre confirmação — sobrescreve o mês)
-- Botão **Recalcular Escala** (mantém folgas manuais marcadas, redistribui o resto)
-- Botão **Salvar Alterações** (persiste o estado atual)
-- Indicador "alterações não salvas"
-
-**Linha resumo por dia** (rodapé da tabela): contagem de funcionários cobrindo o horário de pico, com destaque vermelho se abaixo do mínimo.
-
----
-
-## 5. Edição manual (célula-a-célula)
-
-Ao clicar em uma célula (dia × funcionário), abre um popover com:
-- Select do turno (apenas turnos ativos) ou opção "Folga" ou "Limpar"
-- Botão "Aplicar"
-
-Estado local reflete imediatamente; recálculo de totais é reativo. "Salvar Alterações" persiste em localStorage sob `shiftmanager_schedule_<ano>-<mes>`.
-
-Troca entre dois funcionários no mesmo dia: menu de contexto "Trocar com…" que abre lista de colegas escalados naquele dia.
-
----
-
-## 6. Algoritmo de geração automática
-
-Arquivo novo: `src/lib/scheduleGenerator.ts`.
-
-Entrada: mês/ano, lista de funcionários ativos, turnos ativos, configurações gerais.
-
-Passos:
-
-1. **Alocar folgas por funcionário** (5 por padrão) distribuídas de forma quase uniforme ao longo do mês — evitar 2 folgas do mesmo funcionário em dias consecutivos quando possível; folga preferencial em fim de semana rotativo.
-2. **Para cada dia não-folga de cada funcionário**, escolher um turno ativo com estas prioridades:
-   - Menor contagem desse turno para esse funcionário no mês (evita repetição)
-   - Cobertura da faixa 07:00–22:00 ainda incompleta (prioriza turno cujo horário cobre gap)
-   - Balanceamento global (turno menos usado no dia recebe preferência)
-3. **Validar cobertura**: para cada hora entre 07:00 e 22:00, contar funcionários ativos naquela hora; se algum bloco ficar vazio, o algoritmo re-tenta ajustando o funcionário com maior folga naquela janela.
-4. **Regras rígidas**: máx. dias consecutivos, mínimo de folgas cumprido.
-
-Retorna `ScheduleEntry[]` + `warnings: string[]` (ex.: "Dia 15 sem cobertura das 21h às 22h").
-
-Modal pós-geração mostra as warnings.
-
----
-
-## 7. Tipos e persistência
-
-Ampliar `src/types/index.ts`:
-- `ShiftTemplate`: adicionar `breakMinutes: number`, `active: boolean`, `totalHoursMinutes: number` (derivado)
-- `User`: adicionar `position?: string`
-- Nova interface `ScheduleSettings { daysOffPerMonth, coverageStart, coverageEnd, allowManualEdit, maxConsecutiveDays }`
-
-Persistência (etapa atual, localStorage):
-- `shiftmanager_shift_templates`
-- `shiftmanager_settings`
-- `shiftmanager_schedule_<YYYY-MM>`
-
-Hook novo `useSchedule(year, month)` centraliza leitura/escrita para a página consumir sem duplicar lógica.
-
----
-
-## 8. O que fica fora desta iteração
-
-- Migração para Lovable Cloud (banco + APIs) — próximo passo, uma vez que a UI/lógica esteja validada
-- Conceito de "Unidade" e "Equipe" (só aparecem como filtros vazios/desativados)
-- Sincronização Google Calendar
-- Notificações automáticas de alteração de escala
-
----
+6. **Atualizar a tela de Escalas**
+   - Ajustar **Gerar Escala Automática** para criar uma escala válida e balanceada.
+   - Ajustar **Recalcular Escala** para variar a distribuição usando a escala anterior como referência, mantendo restrições obrigatórias.
+   - Melhorar os avisos exibidos no modal para separar erros bloqueantes, exceções de cobertura e justificativas de folgas/ausências.
 
 ## Detalhes técnicos
 
-**Arquivos novos**
-- `src/pages/escalas/ScheduleTab.tsx` (grade + edição)
-- `src/pages/escalas/ShiftTemplatesTab.tsx` (CRUD turnos)
-- `src/pages/escalas/GeneralSettingsTab.tsx` (form settings)
-- `src/pages/escalas/ShiftEditPopover.tsx`
-- `src/lib/scheduleGenerator.ts`
-- `src/lib/timeUtils.ts` (formatação HH:MM ↔ minutos, "6h20")
-- `src/hooks/useSchedule.ts`
-- `src/hooks/useShiftTemplates.ts`
-- `src/hooks/useScheduleSettings.ts`
-
-**Arquivos alterados**
-- `src/pages/EscalasPage.tsx` — vira container com `Tabs`
-- `src/types/index.ts` — extensões descritas acima
-- `src/data/mockData.ts` — adaptar `mockShiftTemplates` ao novo shape (com `breakMinutes`, `active`)
-
-**Validações**
-- Zod schemas em cada formulário
-- Toast (sonner) em criar/editar/excluir/gerar/salvar
+- Arquivos principais a alterar:
+  - `src/lib/scheduleGenerator.ts`
+  - `src/pages/escalas/ScheduleTab.tsx`
+  - `src/types/index.ts`, se necessário para representar motivo de ausência/folga
+- O algoritmo será determinístico com variação por recálculo: mesmo mês/configuração gera uma escala estável na primeira geração, e o recálculo usa a escala anterior para evitar repetir a mesma distribuição.
+- A cobertura será validada por intervalos reais dos turnos, não apenas por quantidade de funcionários trabalhando no dia.
+- A escala só será aplicada no estado da tela quando passar na validação final.

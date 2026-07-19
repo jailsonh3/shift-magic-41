@@ -40,6 +40,17 @@ export interface ScheduleEntry {
   date: string; // YYYY-MM-DD
   shiftTemplateId?: string;
   isDayOff: boolean;
+  absenceType?: 'dayoff' | 'vacation' | 'medical' | 'absence';
+  generatedBy?: 'auto' | 'manual';
+}
+
+export interface ScheduleAbsence {
+  employeeId: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  type: 'dayoff' | 'vacation' | 'medical' | 'absence';
+  label?: string;
+  source?: 'manual' | 'approved';
 }
 
 export interface Request {
@@ -49,6 +60,8 @@ export interface Request {
   status: 'pending' | 'approved' | 'rejected';
   description: string;
   createdAt: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface TimeBank {
