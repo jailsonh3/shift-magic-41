@@ -219,6 +219,9 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                     const tpl = entry?.shiftTemplateId ? templateById.get(entry.shiftTemplateId) : undefined;
 
                     const absenceLabel = entry?.absenceType === 'vacation' ? 'Férias' : entry?.absenceType === 'medical' ? 'Atestado' : entry?.absenceType === 'absence' ? 'Ausência' : 'Folga';
+                    const tooltipText = entry?.isDayOff ? absenceLabel :
+                      tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime} • pausa ${tpl.breakMinutes}min • ${formatDuration(computeShiftMinutes(tpl.startTime, tpl.endTime, tpl.breakMinutes))}` :
+                      'Sem atribuição';
                     const cell = entry?.isDayOff ? (
                       <div className="rounded bg-shift-dayoff/20 py-1 text-shift-dayoff font-bold text-xs">F</div>
                     ) : tpl ? (
@@ -244,21 +247,13 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                             onDayOff={() => upsertCell(emp.id, date, { isDayOff: true, shiftTemplateId: undefined, absenceType: 'dayoff', generatedBy: 'manual' })}
                             onClear={() => clearCell(emp.id, date)}
                           >
-                            <Tooltip>
-                              <TooltipTrigger asChild>{content}</TooltipTrigger>
-                              <TooltipContent>
-                                {entry?.isDayOff ? absenceLabel :
-                                  tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime} • pausa ${tpl.breakMinutes}min • ${formatDuration(computeShiftMinutes(tpl.startTime, tpl.endTime, tpl.breakMinutes))}` :
-                                  'Sem atribuição — clique para editar'}
-                              </TooltipContent>
-                            </Tooltip>
+                            {content}
                           </ShiftEditPopover>
                         ) : (
                           <Tooltip>
                             <TooltipTrigger asChild>{content}</TooltipTrigger>
                             <TooltipContent>
-                              {entry?.isDayOff ? absenceLabel :
-                                tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime}` : '—'}
+                              {tooltipText}
                             </TooltipContent>
                           </Tooltip>
                         )}
