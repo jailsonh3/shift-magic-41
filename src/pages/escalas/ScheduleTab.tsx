@@ -67,7 +67,7 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
       .flatMap(req => {
         const absenceType: ScheduleAbsence['type'] = req.type === 'vacation' ? 'vacation' : req.type === 'medical' ? 'medical' : 'dayoff';
         if (req.startDate && req.endDate) {
-          return [{ employeeId: req.employeeId, startDate: req.startDate, endDate: req.endDate, type: absenceType, label: req.description }];
+          return [{ employeeId: req.employeeId, startDate: req.startDate, endDate: req.endDate, type: absenceType, label: req.description, source: 'approved' as const }];
         }
 
         const matches = [...req.description.matchAll(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/g)];
@@ -75,7 +75,7 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
         const startDate = toDate(matches[0][1], matches[0][2], matches[0][3]);
         const last = matches[matches.length - 1];
         const endDate = toDate(last[1], last[2], last[3]);
-        return [{ employeeId: req.employeeId, startDate, endDate, type: absenceType, label: req.description }];
+        return [{ employeeId: req.employeeId, startDate, endDate, type: absenceType, label: req.description, source: 'approved' as const }];
       });
   }, [year]);
 
@@ -112,7 +112,11 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
   const handleRecalculate = () => {
     const nextIndex = recalculationIndex + 1;
     setRecalculationIndex(nextIndex);
-    runGeneration('Recalcular escala', { previousEntries: entries, recalculationIndex: nextIndex });
+    runGeneration('Recalcular escala', {
+      previousEntries: entries,
+      keepDayOffs: entries.filter(e => e.isDayOff && e.generatedBy === 'manual'),
+      recalculationIndex: nextIndex,
+    });
   };
 
   const handleSave = () => {
@@ -236,8 +240,8 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                         {isSupervisor && settings.allowManualEdit ? (
                           <ShiftEditPopover
                             templates={templates}
-                            onSelect={(tid) => upsertCell(emp.id, date, { shiftTemplateId: tid, isDayOff: false, absenceType: undefined })}
-                            onDayOff={() => upsertCell(emp.id, date, { isDayOff: true, shiftTemplateId: undefined, absenceType: 'dayoff' })}
+                            onSelect={(tid) => upsertCell(emp.id, date, { shiftTemplateId: tid, isDayOff: false, absenceType: undefined, generatedBy: 'manual' })}
+                            onDayOff={() => upsertCell(emp.id, date, { isDayOff: true, shiftTemplateId: undefined, absenceType: 'dayoff', generatedBy: 'manual' })}
                             onClear={() => clearCell(emp.id, date)}
                           >
                             <Tooltip>

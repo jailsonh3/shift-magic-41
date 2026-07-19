@@ -41,6 +41,7 @@ export interface ScheduleEntry {
   shiftTemplateId?: string;
   isDayOff: boolean;
   absenceType?: 'dayoff' | 'vacation' | 'medical' | 'absence';
+  generatedBy?: 'auto' | 'manual';
 }
 
 export interface ScheduleAbsence {
@@ -49,6 +50,7 @@ export interface ScheduleAbsence {
   endDate: string;   // YYYY-MM-DD
   type: 'dayoff' | 'vacation' | 'medical' | 'absence';
   label?: string;
+  source?: 'manual' | 'approved';
 }
 
 export interface Request {

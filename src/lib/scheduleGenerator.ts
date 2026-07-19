@@ -127,6 +127,7 @@ function buildAbsenceMap(
       endDate: entry.date,
       type: entry.absenceType || 'dayoff',
       label: 'Folga manual',
+      source: 'manual',
     });
   });
 
@@ -245,7 +246,7 @@ export function generateSchedule({
       // Mark everyone as unavailable/day-off for this date (do not save a partial day)
       employees.forEach(emp => {
         const absence = dayAbsences.get(emp.id);
-        entries.push({ id: `${emp.id}-${date}`, employeeId: emp.id, date, isDayOff: true, absenceType: absence?.type || 'absence' });
+        entries.push({ id: `${emp.id}-${date}`, employeeId: emp.id, date, isDayOff: true, absenceType: absence?.type || 'absence', generatedBy: absence?.source === 'manual' ? 'manual' : 'auto' });
         consecutive.set(emp.id, 0);
       });
       success = false;
@@ -351,7 +352,14 @@ export function generateSchedule({
       const absence = dayAbsences.get(emp.id);
       if (absence || offSet.has(emp.id)) {
         const absenceType = absence?.type || 'dayoff';
-        entries.push({ id: `${emp.id}-${date}`, employeeId: emp.id, date, isDayOff: true, absenceType });
+        entries.push({
+          id: `${emp.id}-${date}`,
+          employeeId: emp.id,
+          date,
+          isDayOff: true,
+          absenceType,
+          generatedBy: absence?.source === 'manual' ? 'manual' : 'auto',
+        });
         consecutive.set(emp.id, 0);
         sameTemplateStreak.set(emp.id, 0);
         if (isRegularDayOff(absenceType)) {
@@ -368,6 +376,7 @@ export function generateSchedule({
           date,
           shiftTemplateId,
           isDayOff: false,
+          generatedBy: 'auto',
         });
         const counts = empTemplateCount.get(emp.id)!;
         counts.set(shiftTemplateId, (counts.get(shiftTemplateId) || 0) + 1);
