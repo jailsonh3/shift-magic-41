@@ -219,11 +219,12 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                     const tpl = entry?.shiftTemplateId ? templateById.get(entry.shiftTemplateId) : undefined;
 
                     const absenceLabel = entry?.absenceType === 'vacation' ? 'Férias' : entry?.absenceType === 'medical' ? 'Atestado' : entry?.absenceType === 'absence' ? 'Ausência' : 'Folga';
+                    const absenceAbbrev = entry?.absenceType === 'vacation' ? 'FE' : entry?.absenceType === 'medical' ? 'AT' : entry?.absenceType === 'absence' ? 'AU' : 'F';
                     const tooltipText = entry?.isDayOff ? absenceLabel :
                       tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime} • pausa ${tpl.breakMinutes}min • ${formatDuration(computeShiftMinutes(tpl.startTime, tpl.endTime, tpl.breakMinutes))}` :
                       'Sem atribuição';
                     const cell = entry?.isDayOff ? (
-                      <div className="rounded bg-shift-dayoff/20 py-1 text-shift-dayoff font-bold text-xs">F</div>
+                      <div className="rounded bg-shift-dayoff/20 py-1 text-shift-dayoff font-bold text-xs">{absenceAbbrev}</div>
                     ) : tpl ? (
                       <div className={`rounded py-1 px-0.5 bg-primary/10 text-primary text-[10px] font-semibold`}>
                         {tpl.startTime}
@@ -233,7 +234,7 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                     );
 
                     const content = (
-                      <button className="w-full block" disabled={!isSupervisor || !settings.allowManualEdit}>
+                      <button className="w-full block" title={tooltipText} disabled={!isSupervisor || !settings.allowManualEdit}>
                         {cell}
                       </button>
                     );
