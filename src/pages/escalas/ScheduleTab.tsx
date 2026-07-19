@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { mockUsers } from '@/data/mockData';
+import { mockRequests, mockUsers } from '@/data/mockData';
 import { useShiftTemplates } from '@/hooks/useShiftTemplates';
 import { useScheduleSettings } from '@/hooks/useScheduleSettings';
 import { useSchedule } from '@/hooks/useSchedule';
@@ -13,6 +13,7 @@ import { generateSchedule, totalMonthMinutes, validateCoverage } from '@/lib/sch
 import { computeShiftMinutes, dateKey, formatDuration } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 import ShiftEditPopover from './ShiftEditPopover';
+import { ScheduleAbsence } from '@/types';
 
 const DAY_NAMES = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
@@ -32,6 +33,7 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
   const [warnOpen, setWarnOpen] = useState(false);
   const [warnTitle, setWarnTitle] = useState('Avisos da geração');
   const [warnBlocking, setWarnBlocking] = useState(false);
+  const [recalculationIndex, setRecalculationIndex] = useState(0);
 
   const isSupervisor = user?.role === 'supervisor';
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -54,10 +56,41 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
     return m;
   }, [templates]);
 
-  const runGeneration = (label: string, keepDayOffs?: typeof entries) => {
+  const approvedAbsences = useMemo<ScheduleAbsence[]>(() => {
+    const toDate = (day: string, monthText: string, yearText?: string) => {
+      const requestYear = yearText ? Number(yearText.length === 2 ? `20${yearText}` : yearText) : year;
+      return `${requestYear}-${String(Number(monthText)).padStart(2, '0')}-${String(Number(day)).padStart(2, '0')}`;
+    };
+
+    return mockRequests
+      .filter(req => req.status === 'approved' && ['dayoff', 'vacation', 'medical'].includes(req.type))
+      .flatMap(req => {
+        const absenceType: ScheduleAbsence['type'] = req.type === 'vacation' ? 'vacation' : req.type === 'medical' ? 'medical' : 'dayoff';
+        if (req.startDate && req.endDate) {
+          return [{ employeeId: req.employeeId, startDate: req.startDate, endDate: req.endDate, type: absenceType, label: req.description }];
+        }
+
+        const matches = [...req.description.matchAll(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/g)];
+        if (!matches.length) return [];
+        const startDate = toDate(matches[0][1], matches[0][2], matches[0][3]);
+        const last = matches[matches.length - 1];
+        const endDate = toDate(last[1], last[2], last[3]);
+        return [{ employeeId: req.employeeId, startDate, endDate, type: absenceType, label: req.description }];
+      });
+  }, [year]);
+
+  const runGeneration = (label: string, options?: { previousEntries?: typeof entries; keepDayOffs?: typeof entries; recalculationIndex?: number }) => {
     const emps = mockUsers.filter(u => u.role === 'employee');
     const result = generateSchedule({
-      year, month, employees: emps, templates, settings, keepDayOffs,
+      year,
+      month,
+      employees: emps,
+      templates,
+      settings,
+      keepDayOffs: options?.keepDayOffs,
+      previousEntries: options?.previousEntries,
+      absences: approvedAbsences,
+      recalculationIndex: options?.recalculationIndex,
     });
     if (!result.success) {
       setWarnings(result.warnings);
@@ -75,11 +108,15 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
     toast.success(`${label} concluída — cobertura ${settings.coverageStart}—${settings.coverageEnd} garantida.`);
   };
 
-  const handleGenerate = () => runGeneration('Geração automática');
-  const handleRecalculate = () => runGeneration('Recalcular escala', entries.filter(e => e.isDayOff));
+  const handleGenerate = () => runGeneration('Geração automática', { previousEntries: entries.length ? entries : undefined });
+  const handleRecalculate = () => {
+    const nextIndex = recalculationIndex + 1;
+    setRecalculationIndex(nextIndex);
+    runGeneration('Recalcular escala', { previousEntries: entries, recalculationIndex: nextIndex });
+  };
 
   const handleSave = () => {
-    const check = validateCoverage(entries, templates, settings, year, month);
+    const check = validateCoverage(entries, templates, settings, year, month, mockUsers.filter(u => u.role === 'employee'));
     if (!check.ok) {
       setWarnings(check.problems);
       setWarnTitle('Salvamento bloqueado — cobertura incompleta');
@@ -177,6 +214,7 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                     const entry = scheduleMap.get(`${emp.id}-${date}`);
                     const tpl = entry?.shiftTemplateId ? templateById.get(entry.shiftTemplateId) : undefined;
 
+                    const absenceLabel = entry?.absenceType === 'vacation' ? 'Férias' : entry?.absenceType === 'medical' ? 'Atestado' : entry?.absenceType === 'absence' ? 'Ausência' : 'Folga';
                     const cell = entry?.isDayOff ? (
                       <div className="rounded bg-shift-dayoff/20 py-1 text-shift-dayoff font-bold text-xs">F</div>
                     ) : tpl ? (
@@ -188,24 +226,24 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                     );
 
                     const content = (
-                      <button className="w-full block" disabled={!isSupervisor}>
+                      <button className="w-full block" disabled={!isSupervisor || !settings.allowManualEdit}>
                         {cell}
                       </button>
                     );
 
                     return (
                       <td key={d} className="px-0.5 py-1 text-center">
-                        {isSupervisor ? (
+                        {isSupervisor && settings.allowManualEdit ? (
                           <ShiftEditPopover
                             templates={templates}
-                            onSelect={(tid) => upsertCell(emp.id, date, { shiftTemplateId: tid, isDayOff: false })}
-                            onDayOff={() => upsertCell(emp.id, date, { isDayOff: true, shiftTemplateId: undefined })}
+                            onSelect={(tid) => upsertCell(emp.id, date, { shiftTemplateId: tid, isDayOff: false, absenceType: undefined })}
+                            onDayOff={() => upsertCell(emp.id, date, { isDayOff: true, shiftTemplateId: undefined, absenceType: 'dayoff' })}
                             onClear={() => clearCell(emp.id, date)}
                           >
                             <Tooltip>
                               <TooltipTrigger asChild>{content}</TooltipTrigger>
                               <TooltipContent>
-                                {entry?.isDayOff ? 'Folga' :
+                                {entry?.isDayOff ? absenceLabel :
                                   tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime} • pausa ${tpl.breakMinutes}min • ${formatDuration(computeShiftMinutes(tpl.startTime, tpl.endTime, tpl.breakMinutes))}` :
                                   'Sem atribuição — clique para editar'}
                               </TooltipContent>
@@ -215,7 +253,7 @@ const ScheduleTab: React.FC<Props> = ({ year, month, employeeFilter }) => {
                           <Tooltip>
                             <TooltipTrigger asChild>{content}</TooltipTrigger>
                             <TooltipContent>
-                              {entry?.isDayOff ? 'Folga' :
+                              {entry?.isDayOff ? absenceLabel :
                                 tpl ? `${tpl.name} • ${tpl.startTime}—${tpl.endTime}` : '—'}
                             </TooltipContent>
                           </Tooltip>
