@@ -1,49 +1,30 @@
-## Plano de implementação
+# Equipe por supervisor + exclusão de funcionário + alertas de carga horária
 
-1. **Refatorar o motor de geração de escala**
-   - Substituir a atribuição atual por um algoritmo orientado por dia, cobertura e histórico.
-   - Usar somente turnos ativos cadastrados pelo supervisor.
-   - Calcular quais turnos cobrem o período operacional configurado e validar lacunas antes de aceitar a escala.
-   - Rodar tentativas de redistribuição quando houver lacunas, antes de bloquear a geração.
+## O que muda para você
 
-2. **Garantir rodízio real de turnos**
-   - Considerar o histórico dos dias anteriores de cada funcionário.
-   - Penalizar repetição consecutiva do mesmo turno/horário.
-   - Balancear a quantidade de vezes que cada funcionário recebe cada turno.
-   - Fazer o botão **Recalcular Escala** gerar uma nova distribuição, evitando repetir a escala anterior quando houver alternativas válidas.
+1. **Excluir funcionário volta a funcionar**
+   - Hoje a exclusão só apaga o cartão na tela e volta assim que a página recarrega, porque a lista da equipe não é guardada.
+   - A equipe passa a ser guardada de verdade no aplicativo, então criar, editar e excluir ficam salvos.
+   - Antes de excluir, aparece uma confirmação mostrando quantos dias de escala do mês serão afetados.
 
-3. **Corrigir distribuição de folgas**
-   - Tratar `daysOffPerMonth` como máximo padrão de folgas mensais por funcionário.
-   - Distribuir folgas de forma espaçada ao longo do mês, evitando concentração desnecessária.
-   - Nunca conceder folga se isso comprometer a cobertura operacional.
-   - Reportar quando uma folga solicitada/manual não puder ser mantida por falta de cobertura.
+2. **Cada supervisor vê só a sua equipe**
+   - Todo funcionário fica vinculado a um supervisor (mostrado no cartão e escolhido no formulário).
+   - Ao entrar como supervisor, as telas de Equipe, Escalas, Solicitações e Metas mostram somente os funcionários dele.
+   - Ao entrar como funcionário, continua vendo apenas os próprios dados.
 
-4. **Tratar indisponibilidades e férias**
-   - Adicionar suporte no algoritmo para dias indisponíveis por funcionário.
-   - Considerar férias/atestados/ausências aprovadas como indisponibilidade total, sem contar como folga comum.
-   - Permitir que funcionários ultrapassem o limite de 5 dias sem trabalhar somente quando os dias extras forem férias, afastamentos ou ausência aprovada.
-   - Como a estrutura atual de solicitações tem tipo/status, mas não possui período de início/fim integrado à escala, vou preparar a lógica para aceitar indisponibilidades datadas e ligar aos dados disponíveis no app.
-
-5. **Validação final obrigatória**
-   - Antes de aplicar ou salvar a escala, validar:
-     - cobertura contínua entre início e fim configurados;
-     - máximo de folgas padrão por funcionário;
-     - rodízio mínimo de turnos quando existirem opções suficientes;
-     - respeito a indisponibilidades;
-     - máximo de dias consecutivos configurado, salvo quando cobertura exigir exceção reportada.
-   - Bloquear a geração/salvamento com relatório claro quando não existir escala válida possível.
-
-6. **Atualizar a tela de Escalas**
-   - Ajustar **Gerar Escala Automática** para criar uma escala válida e balanceada.
-   - Ajustar **Recalcular Escala** para variar a distribuição usando a escala anterior como referência, mantendo restrições obrigatórias.
-   - Melhorar os avisos exibidos no modal para separar erros bloqueantes, exceções de cobertura e justificativas de folgas/ausências.
+3. **A escala continua funcionando após mudanças na equipe**
+   - Ao excluir alguém (ou ao tirar alguém da equipe) a escala não quebra: os dias que ficaram sem gente são detectados na hora.
+   - O supervisor recebe um aviso claro listando dia e horário descobertos, e escolhe entre:
+     - **Manter assim mesmo** (registra a autorização do supervisor e mantém a escala publicada), ou
+     - **Redistribuir agora** (recalcula os dias afetados entre os funcionários restantes).
+   - Se a redistribuição fizer alguém passar da carga horária normal do mês, o supervisor vê quanto ficou acima e quem foi afetado, e o funcionário recebe uma notificação avisando do aumento de carga.
 
 ## Detalhes técnicos
 
-- Arquivos principais a alterar:
-  - `src/lib/scheduleGenerator.ts`
-  - `src/pages/escalas/ScheduleTab.tsx`
-  - `src/types/index.ts`, se necessário para representar motivo de ausência/folga
-- O algoritmo será determinístico com variação por recálculo: mesmo mês/configuração gera uma escala estável na primeira geração, e o recálculo usa a escala anterior para evitar repetir a mesma distribuição.
-- A cobertura será validada por intervalos reais dos turnos, não apenas por quantidade de funcionários trabalhando no dia.
-- A escala só será aplicada no estado da tela quando passar na validação final.
+- Novo `src/hooks/useEmployees.ts` no mesmo padrão de `useShiftTemplates` (estado + `localStorage`, semente `mockUsers`), com `create/update/remove` e leitura filtrada por `supervisorId`.
+- Substituir os usos diretos de `mockUsers` por esse hook em `FuncionariosPage`, `EscalasPage`, `escalas/ScheduleTab`, `SolicitacoesPage`, `MetasPage`. `AuthContext` continua usando `mockUsers` para login, mas mescla com a lista salva.
+- Escopo: `visibleEmployees = employees.filter(e => e.role === 'employee' && e.supervisorId === user.id)` para supervisor; `e.id === user.id` para funcionário. Formulário de funcionário ganha campo de supervisor (padrão: supervisor logado).
+- Exclusão: `remove(id)` + limpeza das entradas de escala do funcionário no mês corrente; em seguida `validateCoverage` roda automaticamente e alimenta um diálogo de decisão (`Manter` / `Redistribuir`).
+- Override de cobertura: entrada `shiftmanager_coverage_override_<ano>-<mês>` guardando datas autorizadas + id do supervisor, para que salvar não seja bloqueado nesses dias.
+- Alerta de carga: comparar `totalMonthMinutes` de cada funcionário com a média/limite do mês; acima do limite gera item no relatório do supervisor e uma notificação (`type: 'schedule'`) para o funcionário via lista de notificações.
+- Sem alterações no algoritmo de rodízio/folgas já implementado em `scheduleGenerator.ts`, apenas reuso de `generateSchedule`/`validateCoverage` com a equipe filtrada.
